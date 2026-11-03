@@ -86,8 +86,28 @@ void main() {
       ),
     );
 
-    expect(text.th, 'ขอเชิญหมายเลข LS0001 ที่ ช่อง 2 ค่ะ');
-    expect(text.en, 'Queue Number LS0001 please proceed to Channel 2');
+    expect(text.th, 'ขอเชิญหมายเลข L S 0 0 0 1 ที่ ช่อง 2 ค่ะ');
+    expect(
+      text.en,
+      'Queue Number L S zero zero zero one please proceed to Channel 2',
+    );
+  });
+
+  test('สะกดเลขคิวทีละตัวแบบเว็บ (ติดกันเป็นคำเดียว TTS อ่านเร็ว)', () {
+    // payload จริงฝั่งเว็บ: "C 0 0 3 9" / "C zero zero three nine"
+    expect(
+      QueueVoiceAnnouncer.spellQueue('C0039', english: false),
+      'C 0 0 3 9',
+    );
+    expect(
+      QueueVoiceAnnouncer.spellQueue('C0039', english: true),
+      'C zero zero three nine',
+    );
+    expect(
+      QueueVoiceAnnouncer.spellQueue(' 2SCR 0158 ', english: true),
+      'two S C R zero one five eight',
+    );
+    expect(QueueVoiceAnnouncer.spellQueue('', english: false), '');
   });
 
   test('ไม่มี template (โหลดไม่ได้) → ยังพูดเลขกับช่องได้', () {
@@ -100,7 +120,7 @@ void main() {
       ),
     );
 
-    expect(text.th, 'LS0001 ช่อง 2');
+    expect(text.th, 'L S 0 0 0 1 ช่อง 2');
   });
 
   group('เงื่อนไข dev', () {
@@ -132,9 +152,9 @@ void main() {
       expect(QueueVoiceAnnouncer.speakingRate, 0.7);
       expect(
         requested.single.en,
-        'Queue Number LS0001 please proceed to Channel 2',
+        'Queue Number L S zero zero zero one please proceed to Channel 2',
       );
-      expect(player.played, ['ขอเชิญหมายเลข LS0001 ที่ ช่อง 2 ค่ะ']);
+      expect(player.played, ['ขอเชิญหมายเลข L S 0 0 0 1 ที่ ช่อง 2 ค่ะ']);
       expect(
         announcer.announcing.value,
         'LS0001',
@@ -160,7 +180,7 @@ void main() {
 
       player.finish();
       async.flushMicrotasks();
-      expect(player.played.last, contains('LS0002'));
+      expect(_spokenQueue(player.played.last), 'LS0002');
       player.finish();
       announcer.dispose();
     });
@@ -206,7 +226,7 @@ void main() {
         async.flushMicrotasks();
       }
 
-      expect(player.played.map((e) => e.split(' ')[1]), [
+      expect(player.played.map(_spokenQueue), [
         'Q1',
         'Q4',
         'Q5',
@@ -232,7 +252,7 @@ void main() {
       failVoice = false;
       announcer.onSocketEvent(serving(bookNo: 'B2', publicQueue: 'LS0002'));
       async.flushMicrotasks();
-      expect(player.played.single, contains('LS0002'));
+      expect(_spokenQueue(player.played.single), 'LS0002');
       player.finish();
       announcer.dispose();
     });
@@ -252,3 +272,10 @@ void main() {
     });
   });
 }
+
+/// เลขคิวที่พูดในข้อความไทย ("ขอเชิญหมายเลข L S 0 0 0 2 ที่ ...") → "LS0002"
+String _spokenQueue(String text) =>
+    RegExp(r'หมายเลข (.+?) ที่')
+        .firstMatch(text)!
+        .group(1)!
+        .replaceAll(' ', '');

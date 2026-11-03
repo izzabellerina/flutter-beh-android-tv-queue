@@ -6,8 +6,8 @@ class BehConfig {
   // DEV Server
   static String server = "https://beh.devforu.link";
 
-  // PRODUCTION Server
-  // static String server = "http://172.16.10.40/";
+  // PRODUCTION Server — ไม่มี "/" ท้าย (https()/webSocket()/pathImage() ต่อ "/" เอง)
+  // static String server = "http://172.16.10.40";
 
   static String outsourceServer = "https://www.bangkokeyehospital.com";
 

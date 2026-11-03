@@ -8,6 +8,7 @@ import 'package:flutter_android_tv_queue/provider/common_provider.dart';
 import 'package:flutter_android_tv_queue/routes/router_path.dart';
 import 'package:flutter_android_tv_queue/theme/app_theme.dart';
 import 'package:flutter_android_tv_queue/widgets/tv/tv_button.dart';
+import 'package:flutter_android_tv_queue/widgets/tv/tv_theme_toggle.dart';
 import 'package:flutter_android_tv_queue/widgets/tv/tv_focus_frame.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -40,7 +41,7 @@ class _QueueModePageState extends ConsumerState<QueueModePage> {
     super.dispose();
   }
 
-  /// เติมค่าที่เคยเลือก + focus โหมดเดิม (กด OK ครั้งเดียวไปต่อได้)
+  /// ใช้ค่าที่เคยบันทึก (หมุนจอ/เสียง) + focus โหมดเดิม — ชุดคิวถูกล้างตอนเลือกโหมด
   Future<void> _loadSavedSetup() async {
     final saved = await SharedPreferenceHelper.getQueueSetup();
     if (!mounted) return;
@@ -52,11 +53,9 @@ class _QueueModePageState extends ConsumerState<QueueModePage> {
   void _select(QueueMode mode) {
     ref.read(queueModeProvider.notifier).state = mode;
 
-    // ปรับจำนวนชุดตามโหมด — เก็บค่าชุดที่มีอยู่ไว้
-    final slots = ref.read(queueSlotsProvider);
+    // เข้าหน้าเลือกคิวด้วยฟอร์มว่างเสมอ — ค่าที่บันทึกไว้ (เปิดจอคิวอัตโนมัติ) ไม่ถูกลบ
     ref.read(queueSlotsProvider.notifier).state = [
-      for (var i = 0; i < mode.slotCount; i++)
-        i < slots.length ? slots[i] : const QueueSlotSelection(),
+      for (var i = 0; i < mode.slotCount; i++) const QueueSlotSelection(),
     ];
 
     context.push(RouterPath.queueSetup);
@@ -76,6 +75,10 @@ class _QueueModePageState extends ConsumerState<QueueModePage> {
           padding: AppTheme.overscanPadding,
           child: Column(
             children: [
+              const Align(
+                alignment: Alignment.centerRight,
+                child: TvThemeToggle(),
+              ),
               Text('เลือกระบบคิว', style: theme.textTheme.headlineMedium),
               Text(
                 'เลือกรูปแบบการแสดงคิวบนจอนี้',

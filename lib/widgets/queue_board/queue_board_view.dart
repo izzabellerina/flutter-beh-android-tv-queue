@@ -1,8 +1,11 @@
+import 'dart:math';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_android_tv_queue/controller/queue_board_controller.dart';
 import 'package:flutter_android_tv_queue/models/appointment_queue_model.dart';
 import 'package:flutter_android_tv_queue/models/employee_info_model.dart';
+import 'package:flutter_android_tv_queue/models/station_board_model.dart';
 import 'package:flutter_android_tv_queue/widgets/queue_slot_form.dart';
 
 /// สีจอคิว — สว่าง = แบบจอจริงของ รพ. (teal/ขาว), มืด = teal บนพื้นกรมท่า
@@ -114,7 +117,7 @@ class QueueBoardView extends StatelessWidget {
                             unit: unit,
                           )
                         : _CurrentQueue(
-                            queue: board.current,
+                            board: board,
                             announcing: announcing,
                             colors: colors,
                             unit: unit,
@@ -302,14 +305,25 @@ class _DoctorBand extends StatelessWidget {
   }
 }
 
+/// เลขกำลังตรวจใหม่ → ขยาย + จางเข้า
+Widget _newNumberTransition(Widget child, Animation<double> animation) =>
+    ScaleTransition(
+      scale: Tween(
+        begin: 1.35,
+        end: 1.0,
+      ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutBack)),
+      child: FadeTransition(opacity: animation, child: child),
+    );
+
+/// กำลังตรวจ — queue_channel ตัวเดียว = เลขใหญ่กลางจอ, หลายตัว = รายการเลขคิว + ชื่อช่อง
 class _CurrentQueue extends StatelessWidget {
-  final AppointmentQueueModel? queue;
+  final StationBoardModel board;
   final ValueListenable<String?>? announcing;
   final QueueBoardColors colors;
   final double unit;
 
   const _CurrentQueue({
-    required this.queue,
+    required this.board,
     required this.announcing,
     required this.colors,
     required this.unit,
@@ -344,7 +358,7 @@ class _CurrentQueue extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final number = queue?.publicQueue ?? '';
+    final number = board.current?.publicQueue ?? '';
 
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: unit, vertical: unit * 0.4),
@@ -364,40 +378,251 @@ class _CurrentQueue extends StatelessWidget {
             style: TextStyle(fontSize: unit * 0.95, color: colors.label),
           ),
           Expanded(
-            // เลขใหม่ → ขยาย + จางเข้า ให้คนในห้องรอสังเกตเห็น
-            child: _highlight(
-              number,
-              AnimatedSwitcher(
-                duration: const Duration(milliseconds: 450),
-                transitionBuilder: (child, animation) => ScaleTransition(
-                  scale: Tween(begin: 1.35, end: 1.0).animate(
-                    CurvedAnimation(
-                      parent: animation,
-                      curve: Curves.easeOutBack,
+            child: board.hasMultipleChannels
+                ? _ChannelList(
+                    channels: board.currents,
+                    announcing: announcing,
+                    colors: colors,
+                    unit: unit,
+                  )
+                // เลขใหม่ → ขยาย + จางเข้า ให้คนในห้องรอสังเกตเห็น
+                : _highlight(
+                    number,
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 450),
+                      transitionBuilder: _newNumberTransition,
+                      child: FittedBox(
+                        key: ValueKey(number),
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          number.isEmpty ? '—' : number,
+                          style: TextStyle(
+                            // ไม่มีคิว: ขีดเล็ก ไม่ให้ดูเหมือนแท่งสี่เหลี่ยม
+                            fontSize: unit * (number.isEmpty ? 3 : 7),
+                            fontWeight: FontWeight.w700,
+                            color: colors.number,
+                            height: 1.1,
+                            fontFeatures: const [FontFeature.tabularFigures()],
+                          ),
+                        ),
+                      ),
                     ),
                   ),
-                  child: FadeTransition(opacity: animation, child: child),
-                ),
-                child: FittedBox(
-                  key: ValueKey(number),
-                  fit: BoxFit.scaleDown,
-                  child: Text(
-                    number.isEmpty ? '—' : number,
-                    style: TextStyle(
-                      // ไม่มีคิว: ขีดเล็ก ไม่ให้ดูเหมือนแท่งสี่เหลี่ยม
-                      fontSize: unit * (number.isEmpty ? 3 : 7),
-                      fontWeight: FontWeight.w700,
-                      color: colors.number,
-                      height: 1.1,
-                      fontFeatures: const [FontFeature.tabularFigures()],
-                    ),
-                  ),
-                ),
-              ),
-            ),
           ),
         ],
       ),
+    );
+  }
+}
+
+/// queue_channel หลายตัว — ช่องละแถว แสดงครบทุกช่อง ขนาดแถวย่อตามจำนวนช่อง;
+/// แถวเตี้ยจนอ่านไม่ออก (เช่น คิวคู่ + การ์ดแพทย์ + 4 ช่อง) → แบ่ง 2 คอลัมน์
+class _ChannelList extends StatelessWidget {
+  /// ความสูงแถวต่ำสุดก่อนแบ่ง 2 คอลัมน์ (คูณ unit)
+  static const minRowUnits = 1.8;
+
+  final List<({String channel, AppointmentQueueModel? queue})> channels;
+  final ValueListenable<String?>? announcing;
+  final QueueBoardColors colors;
+  final double unit;
+
+  const _ChannelList({
+    required this.channels,
+    required this.announcing,
+    required this.colors,
+    required this.unit,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // ช่องเยอะ/พื้นที่น้อย → ระยะห่างกับขอบบนย่อตามแถวด้วย ไม่ให้ล้น
+        final top = min(unit * 0.4, constraints.maxHeight * 0.05);
+        final space = max(0.0, constraints.maxHeight - top);
+
+        var columns = 1;
+        var rows = channels.length;
+        double gapFor(int rows) => min(unit * 0.45, space / rows * 0.15);
+        double heightFor(int rows) =>
+            min((space - gapFor(rows) * (rows - 1)) / rows, unit * 5.2);
+        if (rows > 1 && heightFor(rows) < unit * minRowUnits) {
+          columns = 2;
+          rows = (channels.length / 2).ceil();
+        }
+        final gap = gapFor(rows);
+        final rowHeight = heightFor(rows);
+
+        Widget cell(int i) => i < channels.length
+            ? _ChannelRow(
+                channel: channels[i].channel,
+                number: channels[i].queue?.publicQueue ?? '',
+                height: rowHeight,
+                announcing: announcing,
+                colors: colors,
+                unit: unit,
+              )
+            : const SizedBox.shrink();
+
+        return Padding(
+          padding: EdgeInsets.only(top: top),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              for (var r = 0; r < rows; r++) ...[
+                if (r > 0) SizedBox(height: gap),
+                if (columns == 1)
+                  cell(r)
+                else
+                  Row(
+                    children: [
+                      Expanded(child: cell(r * 2)),
+                      SizedBox(width: unit * 0.45),
+                      Expanded(child: cell(r * 2 + 1)),
+                    ],
+                  ),
+              ],
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// 1 ช่อง: แถบสี | เลขคิว (ชิดซ้าย) ··· ป้ายชื่อช่อง (ชิดขวา)
+class _ChannelRow extends StatelessWidget {
+  final String channel;
+  final String number;
+  final double height;
+  final ValueListenable<String?>? announcing;
+  final QueueBoardColors colors;
+  final double unit;
+
+  const _ChannelRow({
+    required this.channel,
+    required this.number,
+    required this.height,
+    required this.announcing,
+    required this.colors,
+    required this.unit,
+  });
+
+  Widget _row(bool on) {
+    final hasQueue = number.isNotEmpty;
+    final radius = BorderRadius.circular(unit * 0.7);
+
+    // ความสูงไม่ animate — AUTO ROTATION สลับ station ที่จำนวนช่องต่างกันจะล้นระหว่างทาง
+    return SizedBox(
+      height: height,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 300),
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          color: colors.box,
+          borderRadius: radius,
+          border: Border.all(
+            width: unit * 0.2,
+            color: on ? colors.number : Colors.transparent,
+          ),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // key อยู่ที่แถบสี (ไม่มีลูก) — ใส่ที่กรอบจะสร้างทั้งแถวใหม่ กรอบ/เลขไม่ animate
+            Container(
+              key: on ? const ValueKey('announcing-highlight') : null,
+              width: unit * 0.45,
+              color: colors.number.withValues(alpha: hasQueue ? 1 : 0.3),
+            ),
+            Expanded(
+              child: Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: unit * 0.8,
+                  vertical: height * 0.1,
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      flex: 3,
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 450),
+                        transitionBuilder: _newNumberTransition,
+                        layoutBuilder: (current, previous) => Stack(
+                          alignment: Alignment.centerLeft,
+                          children: [...previous, ?current],
+                        ),
+                        child: FittedBox(
+                          key: ValueKey(number),
+                          fit: BoxFit.scaleDown,
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            hasQueue ? number : '-',
+                            style: TextStyle(
+                              fontSize: height * 0.62,
+                              fontWeight: FontWeight.w800,
+                              color: colors.number.withValues(
+                                alpha: hasQueue ? 1 : 0.4,
+                              ),
+                              height: 1.1,
+                              fontFeatures: const [
+                                FontFeature.tabularFigures(),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    SizedBox(width: unit * 0.6),
+                    Expanded(
+                      flex: 2,
+                      child: Align(
+                        alignment: Alignment.centerRight,
+                        // ชื่อช่องยาวกว่าที่ → ย่อทั้งป้าย ไม่ตัดคำ ("ช่...")
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: Alignment.centerRight,
+                          child: Container(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: unit * 0.7,
+                              vertical: unit * 0.2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: colors.header,
+                              borderRadius: BorderRadius.circular(unit * 0.5),
+                            ),
+                            child: Text(
+                              channel,
+                              maxLines: 1,
+                              softWrap: false,
+                              style: TextStyle(
+                                fontSize: (height * 0.4).clamp(0.0, unit * 1.5),
+                                fontWeight: FontWeight.w700,
+                                color: colors.onHeader,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final listenable = announcing;
+    if (listenable == null || number.isEmpty) return _row(false);
+
+    return ValueListenableBuilder<String?>(
+      valueListenable: listenable,
+      builder: (context, value, _) => _row(value == number),
     );
   }
 }

@@ -10,6 +10,7 @@ import 'package:flutter_android_tv_queue/service/auth_service.dart';
 import 'package:flutter_android_tv_queue/theme/app_theme.dart';
 import 'package:flutter_android_tv_queue/widgets/brand_panel.dart';
 import 'package:flutter_android_tv_queue/widgets/tv/tv_button.dart';
+import 'package:flutter_android_tv_queue/widgets/tv/tv_theme_toggle.dart';
 import 'package:flutter_android_tv_queue/widgets/tv/tv_checkbox_tile.dart';
 import 'package:flutter_android_tv_queue/widgets/tv/tv_focus_frame.dart';
 import 'package:flutter_android_tv_queue/widgets/tv/tv_text_field.dart';
@@ -135,18 +136,12 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   }
 
   Widget _buildHeader(ThemeData theme) {
-    final isDark = ref.watch(themeModeProvider) == ThemeMode.dark;
-
     return Row(
       children: [
         Expanded(
           child: Text('เข้าสู่ระบบ', style: theme.textTheme.headlineSmall),
         ),
-        TvTextButton(
-          icon: isDark ? Icons.light_mode_outlined : Icons.dark_mode_outlined,
-          text: isDark ? 'โหมดสว่าง' : 'โหมดมืด',
-          onPressed: _toggleTheme,
-        ),
+        const TvThemeToggle(),
       ],
     );
   }
@@ -266,15 +261,6 @@ class _LoginPageState extends ConsumerState<LoginPage> {
     }
     _autoSetup = setup;
     await _handleLogin(auto: true);
-  }
-
-  Future<void> _toggleTheme() async {
-    final notifier = ref.read(themeModeProvider.notifier);
-    final next = notifier.state == ThemeMode.dark
-        ? ThemeMode.light
-        : ThemeMode.dark;
-    notifier.state = next;
-    await SharedPreferenceHelper.setThemeMode(next);
   }
 
   Future<void> _handleLogin({bool auto = false}) async {
