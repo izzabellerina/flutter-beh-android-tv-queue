@@ -2,6 +2,7 @@
 
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_android_tv_queue/models/queue_socket_event_model.dart';
+import 'package:flutter_android_tv_queue/service/configuration.dart';
 import 'package:flutter_android_tv_queue/service/queue_socket_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -20,10 +21,20 @@ void main() {
   QueueSocketService create() =>
       QueueSocketService(token: () => token, connector: server.connect);
 
-  test('URL = wss://…/general-api/api/v3/websocket/<token>', () {
+  test('URL = ws(s)://…/general-api/api/v3/websocket/<token> ตาม server', () {
+    final original = BehConfig.server;
+    addTearDown(() => BehConfig.server = original);
+
+    BehConfig.server = 'https://beh.devforu.link';
     expect(
       QueueSocketService.uriFor('abc').toString(),
       'wss://beh.devforu.link/general-api/api/v3/websocket/abc',
+    );
+
+    BehConfig.server = 'http://172.16.10.40';
+    expect(
+      QueueSocketService.uriFor('abc').toString(),
+      'ws://172.16.10.40/general-api/api/v3/websocket/abc',
     );
   });
 

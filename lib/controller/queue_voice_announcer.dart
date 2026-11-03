@@ -172,9 +172,26 @@ class QueueVoiceAnnouncer {
     _playing = false;
   }
 
+  static const _digitsEn = [
+    'zero', 'one', 'two', 'three', 'four', //
+    'five', 'six', 'seven', 'eight', 'nine',
+  ];
+
+  /// สะกดเลขคิวทีละตัวแบบเว็บ — ติดกันเป็นคำเดียว TTS จะอ่านรวดเดียว ฟังเร็ว
+  /// TH: "C0039" → "C 0 0 3 9", EN: "C0039" → "C zero zero three nine"
+  static String spellQueue(String queue, {required bool english}) => queue
+      .trim()
+      .split('')
+      .where((c) => c.trim().isNotEmpty)
+      .map((c) {
+        final digit = int.tryParse(c);
+        return english && digit != null ? _digitsEn[digit] : c;
+      })
+      .join(' ');
+
   /// TH = prefix_name_th + public_queue + middle_th + name_th + suffix_name_th
   /// EN = prefix_name_en + public_queue + middle_en + name_en + suffix_name_en
-  /// เช่น "ขอเชิญหมายเลข LS0001 ที่ ช่อง 2 ค่ะ" — ข้ามส่วนที่ว่าง/null
+  /// เช่น "ขอเชิญหมายเลข L S 0 0 0 1 ที่ ช่อง 2 ค่ะ" — ข้ามส่วนที่ว่าง/null
   static ({String th, String en}) buildText(
     QueueCallingVoiceTextModel? template,
     VoiceAnnouncement item,
@@ -185,14 +202,14 @@ class QueueVoiceAnnouncer {
     return (
       th: join([
         template?.prefixNameTh ?? '',
-        item.publicQueue,
+        spellQueue(item.publicQueue, english: false),
         template?.middleTh ?? '',
         item.nameTh,
         template?.suffixNameTh ?? '',
       ]),
       en: join([
         template?.prefixNameEn ?? '',
-        item.publicQueue,
+        spellQueue(item.publicQueue, english: true),
         template?.middleEn ?? '',
         item.nameEn,
         template?.suffixNameEn ?? '',

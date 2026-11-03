@@ -10,6 +10,7 @@ import 'package:flutter_android_tv_queue/routes/router_path.dart';
 import 'package:flutter_android_tv_queue/theme/app_theme.dart';
 import 'package:flutter_android_tv_queue/widgets/queue_slot_form.dart';
 import 'package:flutter_android_tv_queue/widgets/tv/tv_button.dart';
+import 'package:flutter_android_tv_queue/widgets/tv/tv_theme_toggle.dart';
 import 'package:flutter_android_tv_queue/widgets/tv/tv_select_field.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -156,6 +157,8 @@ class _QueueSetupPageState extends ConsumerState<QueueSetupPage>
                   text: 'ทดสอบเสียง',
                   onPressed: _testVoice,
                 ),
+                const SizedBox(width: 8),
+                const TvThemeToggle(compact: true),
               ],
             ),
             const SizedBox(height: 12),

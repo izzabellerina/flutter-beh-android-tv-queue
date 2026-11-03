@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_android_tv_queue/controller/queue_board_controller.dart';
 import 'package:flutter_android_tv_queue/controller/queue_voice_announcer.dart';
 import 'package:flutter_android_tv_queue/enum/queue_mode.dart';
@@ -18,6 +19,7 @@ import 'package:flutter_android_tv_queue/service/general_service.dart';
 import 'package:flutter_android_tv_queue/service/queue_socket_service.dart';
 import 'package:flutter_android_tv_queue/theme/app_theme.dart';
 import 'package:flutter_android_tv_queue/widgets/queue_board/queue_board_view.dart';
+import 'package:flutter_android_tv_queue/widgets/tv/tv_theme_toggle.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 /// หน้าจอคิว — คิวเดี่ยว (ทีวีแนวตั้ง หมุนภาพในแอป) / คิวคู่ (แนวนอน ซ้าย–ขวา)
@@ -32,6 +34,12 @@ class QueueDisplayPage extends ConsumerStatefulWidget {
 class _QueueDisplayPageState extends ConsumerState<QueueDisplayPage>
     with QueueVoiceMixin {
   static const _reloginCooldown = Duration(minutes: 5);
+
+  /// ปุ่มสลับโหมด ซ่อนไว้ (จอคนไข้) — กดรีโมทปุ่มใดก็ได้ถึงโผล่ ไม่กดต่อ 5 วิหายเอง
+  static const themeButtonTimeout = Duration(seconds: 5);
+  final _themeButtonFocus = FocusNode(debugLabel: 'theme-toggle');
+  Timer? _themeButtonTimer;
+  bool _showThemeButton = false;
 
   late final List<QueueSlotSelection> _slots;
   late final List<QueueBoardController> _controllers;
@@ -90,10 +98,14 @@ class _QueueDisplayPageState extends ConsumerState<QueueDisplayPage>
     for (final controller in _controllers) {
       controller.start();
     }
+    HardwareKeyboard.instance.addHandler(_onKey);
   }
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_onKey);
+    _themeButtonTimer?.cancel();
+    _themeButtonFocus.dispose();
     ScreenHelper.setKeepScreenOn(false);
     for (final subscription in _subscriptions) {
       subscription.cancel();
@@ -104,6 +116,50 @@ class _QueueDisplayPageState extends ConsumerState<QueueDisplayPage>
       controller.dispose();
     }
     super.dispose();
+  }
+
+  /// ปุ่มใดก็ได้ (ยกเว้น Back) → โชว์ปุ่มสลับโหมด + นับ 5 วิใหม่ — ไม่กินปุ่ม ให้ OK/ลูกศรทำงานตามปกติ
+  bool _onKey(KeyEvent event) {
+    if (event is! KeyDownEvent || !mounted) return false;
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.goBack || key == LogicalKeyboardKey.escape) {
+      return false;
+    }
+
+    _themeButtonTimer?.cancel();
+    _themeButtonTimer = Timer(themeButtonTimeout, () {
+      if (mounted) setState(() => _showThemeButton = false);
+    });
+    if (!_showThemeButton) {
+      setState(() => _showThemeButton = true);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _themeButtonFocus.requestFocus();
+      });
+    }
+    return false;
+  }
+
+  /// วางปุ่มสลับโหมดมุมขวาบนของ [child] — อยู่ใน RotatedBox เดียวกับบอร์ด ทีวีแนวตั้งจะอ่านตรง
+  Widget _withThemeButton(Widget child) {
+    return Stack(
+      children: [
+        Positioned.fill(child: child),
+        if (_showThemeButton)
+          Positioned(
+            top: 12,
+            right: 28,
+            child: Material(
+              color: Theme.of(context).colorScheme.surface,
+              elevation: 6,
+              borderRadius: BorderRadius.circular(AppTheme.radius),
+              child: Padding(
+                padding: const EdgeInsets.all(6),
+                child: TvThemeToggle(focusNode: _themeButtonFocus),
+              ),
+            ),
+          ),
+      ],
+    );
   }
 
   /// ประกาศเฉพาะคิวที่จะขึ้น "กำลังตรวจ" บนจอนี้: station ที่แสดง
@@ -216,20 +272,22 @@ class _QueueDisplayPageState extends ConsumerState<QueueDisplayPage>
 
     final Widget content;
     if (mode == QueueMode.dual) {
-      content = Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          for (var i = 0; i < _controllers.length; i++) ...[
-            if (i > 0) const SizedBox(width: 20),
-            Expanded(
-              child: QueueBoardView(
-                controller: _controllers[i],
-                doctor: _slots[i].doctor,
-                announcing: _announcer?.announcing,
+      content = _withThemeButton(
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (var i = 0; i < _controllers.length; i++) ...[
+              if (i > 0) const SizedBox(width: 20),
+              Expanded(
+                child: QueueBoardView(
+                  controller: _controllers[i],
+                  doctor: _slots[i].doctor,
+                  announcing: _announcer?.announcing,
+                ),
               ),
-            ),
+            ],
           ],
-        ],
+        ),
       );
     } else {
       final board = QueueBoardView(
@@ -239,9 +297,14 @@ class _QueueDisplayPageState extends ConsumerState<QueueDisplayPage>
         waitingRows: 3,
       );
       content = rotation.isPortrait
-          ? RotatedBox(quarterTurns: rotation.quarterTurns, child: board)
+          ? RotatedBox(
+              quarterTurns: rotation.quarterTurns,
+              child: _withThemeButton(board),
+            )
           // คิวเดี่ยวบนทีวีแนวนอน: บอร์ดสัดส่วนแนวตั้งกลางจอ
-          : Center(child: AspectRatio(aspectRatio: 0.62, child: board));
+          : _withThemeButton(
+              Center(child: AspectRatio(aspectRatio: 0.62, child: board)),
+            );
     }
 
     return Scaffold(

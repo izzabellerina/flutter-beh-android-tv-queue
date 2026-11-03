@@ -20,29 +20,41 @@ class StationBoardModel {
     required this.counter,
   });
 
-  /// กำลังตรวจ = queue_channel[0].appointment_call_queue (ตามที่ dev กำหนด)
+  /// กำลังตรวจแบบช่องเดียว = queue_channel[0].appointment_call_queue — หลายช่องใช้ [currents]
   AppointmentQueueModel? get current {
     final channels = callQueue.queueChannel;
     return channels.isEmpty ? null : channels.first.appointmentCallQueue;
   }
+
+  /// กำลังตรวจทุกช่อง ตามลำดับ queue_channel — queue null = ช่องนั้นยังไม่มีคิว
+  List<({String channel, AppointmentQueueModel? queue})> get currents => [
+    for (final c in callQueue.queueChannel)
+      (channel: c.queueRoom.nameTh, queue: c.appointmentCallQueue),
+  ];
+
+  /// queue_channel มากกว่า 1 → จอแสดงเป็นรายการ เลขคิว + ชื่อช่อง
+  bool get hasMultipleChannels => callQueue.queueChannel.length > 1;
+
+  Iterable<AppointmentQueueModel> get _serving =>
+      currents.map((e) => e.queue).nonNulls;
 
   /// prefix สำหรับเทียบกับ `data.queue` ของ socket เช่น "2SCR"
   String get queuePrefix =>
       callQueue.prefix.isNotEmpty ? callQueue.prefix : station.prefix;
 
   /// ไม่มีคิวค้างเลย (กำลังตรวจ/รอ/ติดต่อเคาน์เตอร์) → AUTO ROTATION ค้างแค่ 10 วิ
-  bool get isEmpty => current == null && waiting.isEmpty && counter.isEmpty;
+  bool get isEmpty => _serving.isEmpty && waiting.isEmpty && counter.isEmpty;
 
   /// ใช้เทียบว่าข้อมูลเปลี่ยนไหมหลัง fetch ซ้ำ
   String get signature => [
-    current?.bookNo ?? '-',
+    currents.map((e) => e.queue?.bookNo ?? '-').join(','),
     waiting.map((e) => e.bookNo).join(','),
     counter.map((e) => e.bookNo).join(','),
   ].join('|');
 
   bool containsBookNo(String bookNo) {
     if (bookNo.isEmpty) return false;
-    return current?.bookNo == bookNo ||
+    return _serving.any((e) => e.bookNo == bookNo) ||
         waiting.any((e) => e.bookNo == bookNo) ||
         counter.any((e) => e.bookNo == bookNo);
   }

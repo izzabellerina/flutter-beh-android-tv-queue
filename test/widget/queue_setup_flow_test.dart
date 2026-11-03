@@ -7,7 +7,9 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_android_tv_queue/helper/queue_date.dart';
+import 'package:flutter_android_tv_queue/helper/shared_preference_helper.dart';
 import 'package:flutter_android_tv_queue/models/login_model.dart';
+import 'package:flutter_android_tv_queue/models/queue_slot_selection.dart';
 import 'package:flutter_android_tv_queue/pages/queue_display_page.dart';
 import 'package:flutter_android_tv_queue/pages/queue_mode_page.dart';
 import 'package:flutter_android_tv_queue/pages/queue_setup_page.dart';
@@ -167,6 +169,31 @@ void main() {
 
   group('หน้าเลือกระบบคิว', () {
     testWidgets(
+      'ลูกศรขึ้นจากการ์ดโหมด → ปุ่มสลับโหมด → OK = สลับ + บันทึก; เข้าหน้าเลือกคิวก็มีปุ่ม',
+      (tester) async {
+        final container = await pumpApp(tester);
+        expect(container.read(themeModeProvider), ThemeMode.dark);
+        expect(find.text('โหมดสว่าง'), findsOneWidget);
+
+        await press(tester, LogicalKeyboardKey.arrowUp);
+        await press(tester, LogicalKeyboardKey.select);
+        expect(container.read(themeModeProvider), ThemeMode.light);
+        expect(find.text('โหมดมืด'), findsOneWidget);
+        final prefs = await SharedPreferences.getInstance();
+        expect(prefs.getString('THEME_MODE'), 'light');
+
+        // หน้าเลือกคิว: ปุ่มไอคอน (แถวบนเต็ม) — กดแล้วสลับกลับ
+        await press(tester, LogicalKeyboardKey.arrowDown);
+        await press(tester, LogicalKeyboardKey.select);
+        expect(find.byType(QueueSetupPage), findsOneWidget);
+        await tester.tap(find.byIcon(Icons.dark_mode_outlined));
+        await tester.pumpAndSettle();
+        expect(container.read(themeModeProvider), ThemeMode.dark);
+        expect(find.byIcon(Icons.light_mode_outlined), findsOneWidget);
+      },
+    );
+
+    testWidgets(
       'focus เริ่มที่คิวเดี่ยว → ขวา = คิวคู่ → OK = หน้าตั้งค่า 2 ชุดซ้าย–ขวา',
       (tester) async {
         final container = await pumpApp(tester);
@@ -189,7 +216,7 @@ void main() {
       },
     );
 
-    testWidgets('มีค่าที่เคยบันทึก → focus โหมดเดิม + เติมค่าในฟอร์ม', (
+    testWidgets('มีค่าที่เคยบันทึก → focus โหมดเดิม แต่ฟอร์มเลือกคิวว่าง', (
       tester,
     ) async {
       SharedPreferences.setMockInitialValues({
@@ -208,12 +235,26 @@ void main() {
         }),
       });
 
-      await pumpApp(tester);
+      final container = await pumpApp(tester);
       expect(focusedLabel(), 'mode-dual');
 
+      // เข้าหน้าเลือกคิว = ล้างค่าเก่า (TYPE/STATION/DOCTOR, AUTO ROTATION กลับค่าเริ่มต้น)
       await press(tester, LogicalKeyboardKey.select);
-      expect(find.text('แผนกตรวจตา'), findsOneWidget);
-      expect(find.text('แผนกเด็ก'), findsOneWidget);
+      expect(find.text('แผนกตรวจตา'), findsNothing);
+      expect(find.text('แผนกเด็ก'), findsNothing);
+      expect(find.text('select type'), findsNWidgets(2));
+      final slots = container.read(queueSlotsProvider);
+      expect(slots, hasLength(2));
+      for (final slot in slots) {
+        expect(slot.type, isNull);
+        expect(slot.station, isNull);
+        expect(slot.doctor, isNull);
+        expect(slot.autoRotation, const QueueSlotSelection().autoRotation);
+      }
+
+      // ค่าที่บันทึกไว้ (สำหรับเปิดจอคิวอัตโนมัติ) ไม่ถูกลบ
+      final saved = await SharedPreferenceHelper.getQueueSetup();
+      expect(saved!.slots.first.type?.nameTh, 'แผนกตรวจตา');
     });
 
     testWidgets('Back บนรีโมท = ออกจากระบบ → หน้า login และล้าง token', (
@@ -394,7 +435,7 @@ void main() {
         await tester.tap(find.text('ทดสอบเสียง'));
         await tester.pumpAndSettle();
 
-        expect(voiceRequests, ['ขอเชิญหมายเลข A001 ที่ ช่อง 1 ค่ะ']);
+        expect(voiceRequests, ['ขอเชิญหมายเลข A 0 0 1 ที่ ช่อง 1 ค่ะ']);
         expect(player.played, hasLength(1));
         expect(find.text('กำลังเล่นเสียงทดสอบ…'), findsOneWidget);
         player.finish();

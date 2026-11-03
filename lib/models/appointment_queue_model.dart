@@ -7,7 +7,8 @@ class AppointmentQueueModel {
 
   int get id => data['id'] ?? 0;
 
-  String get bookNo => data['bookno'] ?? '';
+  /// คิวรอ/ติดต่อเคาน์เตอร์ ส่งมาเป็น `bookno`; คิวกำลังตรวจ (`queue_channel[].appointment_call_queue`) เป็น `status_tbooknoh`
+  String get bookNo => data['bookno'] ?? data['status_tbooknoh'] ?? '';
 
   String get vn => data['vn'] ?? '';
 

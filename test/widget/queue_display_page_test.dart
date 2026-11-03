@@ -5,6 +5,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_android_tv_queue/enum/display_rotation.dart';
 import 'package:flutter_android_tv_queue/enum/queue_mode.dart';
@@ -35,6 +36,12 @@ void main() {
 
   /// queue_type → public_queue ที่กำลังตรวจ (null = ไม่มี)
   late Map<String, String?> current;
+
+  /// คิวของ channel ที่ 2+ (index → public_queue) — fixture มี 4 channel
+  late Map<int, String> otherChannels;
+
+  /// queue_type → จำนวน queue_channel (ไม่ระบุ = 4 ตาม fixture, เกิน 4 = เติมช่องเพิ่ม)
+  late Map<String, int> channelCount;
 
   /// "prefix|STATUS" → รายการ public_queue
   late Map<String, List<String>> lists;
@@ -78,15 +85,30 @@ void main() {
     data['building_room'] = queueType == 'screening'
         ? {'id': 23, 'name_th': 'ห้องสกรีนนิ่ง', 'name_en': 'Screening Room'}
         : null;
-    final number = current[queueType];
-    (data['queue_channel'] as List).first['appointment_call_queue'] =
-        number == null
+    // เหมือน production: appointment_call_queue ใช้ status_tbooknoh (ไม่ใช่ bookno)
+    Map<String, dynamic>? call(String? number) => number == null
         ? null
         : {
-            'bookno': 'BKN-$number',
+            'status_tbooknoh': 'BKN-$number',
+            'call_queue_status': 'SERVING',
             'queue': '${data['prefix']}0001',
             'public_queue': number,
           };
+
+    final channels = data['queue_channel'] as List;
+    final count = channelCount[queueType];
+    if (count != null && count < channels.length) {
+      channels.removeRange(count, channels.length);
+    }
+    for (var i = channels.length; i < (count ?? 0); i++) {
+      channels.add(channel(id: 100 + i, roomTh: 'ช่อง ${i + 1}'));
+    }
+    channels.first['appointment_call_queue'] = call(current[queueType]);
+    for (final MapEntry(:key, :value) in otherChannels.entries) {
+      if (key < channels.length) {
+        channels[key]['appointment_call_queue'] = call(value);
+      }
+    }
     return response;
   }
 
@@ -183,6 +205,8 @@ void main() {
 
   setUp(() {
     current = {'screening': 'LS0001', 'refraction': null};
+    otherChannels = {};
+    channelCount = {};
     lists = {};
     socketServer = FakeSocketServer();
     keepScreenOnCalls = [];
@@ -199,6 +223,16 @@ void main() {
           },
         );
   });
+
+  /// ป้ายชื่อช่องต้องเห็นครบ ไม่ถูกตัดเป็น "ช่..."
+  void expectBadgesNotCut(WidgetTester tester) {
+    for (final name in ['ช่อง 1', 'ห้อง 4', 'ช่อง 2']) {
+      for (final e in find.text(name).evaluate()) {
+        final paragraph = e.renderObject! as RenderParagraph;
+        expect(paragraph.didExceedMaxLines, isFalse, reason: name);
+      }
+    }
+  }
 
   // ═══════════════════════════════════════════════════════════════════
 
@@ -298,6 +332,196 @@ void main() {
     expect(find.text('LS0002'), findsOneWidget);
   });
 
+  testWidgets(
+    'คิวกำลังตรวจถูกย้ายไป station อื่น → refresh ทันที คิวหายจากกำลังตรวจ',
+    (tester) async {
+      channelCount = {'screening': 1};
+      await pumpDisplay(
+        tester,
+        mode: QueueMode.single,
+        slots: [
+          QueueSlotSelection(
+            type: type,
+            station: screening,
+            autoRotation: false,
+          ),
+        ],
+      );
+      expect(find.text('LS0001'), findsOneWidget);
+
+      // เว็บย้าย LS0001 ไป refraction: socket bookno เดิม แต่ queue เป็น prefix ของ station ใหม่
+      current['screening'] = null;
+      socketServer.last.callQueue(bookNo: 'BKN-LS0001', queue: '2REF0001');
+      await tester.pump(const Duration(milliseconds: 600));
+      await tester.pumpAndSettle();
+
+      expect(find.text('LS0001'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'กำลังตรวจ หลาย channel → ทุกช่อง: เลขคิวซ้าย + ชื่อช่องขวา, ไม่มีคิว = "-"',
+    (tester) async {
+      otherChannels = {2: 'LS0005'};
+      await pumpDisplay(
+        tester,
+        mode: QueueMode.single,
+        slots: [
+          QueueSlotSelection(
+            type: type,
+            station: screening,
+            autoRotation: false,
+          ),
+        ],
+      );
+
+      // fixture: ช่อง 1 (LS0001), ห้อง 4 (ว่าง), ช่อง 2 (LS0005), ช่อง 2 (ว่าง)
+      expect(find.text('ช่อง 1'), findsOneWidget);
+      expect(find.text('ห้อง 4'), findsOneWidget);
+      expect(find.text('ช่อง 2'), findsNWidgets(2));
+      expect(find.text('LS0001'), findsOneWidget);
+      expect(find.text('LS0005'), findsOneWidget);
+      expect(find.text('-'), findsNWidgets(2));
+
+      // เรียงตาม queue_channel (หมุน 90° → ลำดับบนลงล่างอยู่บนแกน x ของจอ)
+      Offset at(String text) => tester.getCenter(find.text(text).first);
+      expect(at('ห้อง 4').dx, lessThan(at('ช่อง 1').dx));
+      // เลขคิวกับชื่อช่องอยู่แถวเดียวกัน
+      expect(at('LS0001').dx, moreOrLessEquals(at('ช่อง 1').dx, epsilon: 2));
+    },
+  );
+
+  testWidgets('กำลังตรวจ channel เดียว → เลขใหญ่แบบเดิม ไม่มีชื่อช่อง', (
+    tester,
+  ) async {
+    channelCount = {'screening': 1};
+    await pumpDisplay(
+      tester,
+      mode: QueueMode.single,
+      slots: [
+        QueueSlotSelection(type: type, station: screening, autoRotation: false),
+      ],
+    );
+
+    expect(find.text('LS0001'), findsOneWidget);
+    expect(find.text('ช่อง 1'), findsNothing);
+  });
+
+  testWidgets('คิวคู่ + การ์ดแพทย์ 4 ช่อง → แถวเตี้ยเกิน = แบ่ง 2 คอลัมน์', (
+    tester,
+  ) async {
+    otherChannels = {1: 'LS0004'};
+    await pumpDisplay(
+      tester,
+      mode: QueueMode.dual,
+      slots: [
+        for (var i = 0; i < 2; i++)
+          QueueSlotSelection(
+            type: type,
+            station: screening,
+            doctor: doctor,
+            autoRotation: false,
+          ),
+      ],
+    );
+
+    // fixture: [ช่อง 1 | ห้อง 4] / [ช่อง 2 | ช่อง 2] — บอร์ดแรก
+    Offset at(String text) => tester.getCenter(find.text(text).first);
+    expect(at('LS0001').dy, moreOrLessEquals(at('LS0004').dy, epsilon: 1));
+    expect(at('LS0004').dx, greaterThan(at('LS0001').dx));
+    expect(find.text('ช่อง 2'), findsNWidgets(4));
+    expectBadgesNotCut(tester);
+  });
+
+  testWidgets('คิวคู่ ไม่มีการ์ดแพทย์ 4 ช่อง → ช่องละแถว, ชื่อช่องไม่ถูกตัด', (
+    tester,
+  ) async {
+    // เหมือนจอจริงในภาพผู้ใช้: หัวมีแต่ชื่อไทย (refraction ไม่มี building_room)
+    current['refraction'] = 'LS0001';
+    otherChannels = {1: 'LS0004'};
+    await pumpDisplay(
+      tester,
+      mode: QueueMode.dual,
+      slots: [
+        for (var i = 0; i < 2; i++)
+          QueueSlotSelection(
+            type: type,
+            station: refraction,
+            autoRotation: false,
+          ),
+      ],
+    );
+
+    Offset at(String text) => tester.getCenter(find.text(text).first);
+    expect(at('LS0004').dy, greaterThan(at('LS0001').dy));
+    expect(at('LS0004').dx, moreOrLessEquals(at('LS0001').dx, epsilon: 1));
+    expectBadgesNotCut(tester);
+  });
+
+  testWidgets(
+    'ช่องเยอะ + พื้นที่น้อย (คิวคู่ + การ์ดแพทย์ 12 ช่อง) → แสดงครบ ไม่ล้น',
+    (tester) async {
+      channelCount = {'screening': 12};
+      otherChannels = {11: 'LS0012'};
+      await pumpDisplay(
+        tester,
+        mode: QueueMode.dual,
+        slots: [
+          for (var i = 0; i < 2; i++)
+            QueueSlotSelection(
+              type: type,
+              station: screening,
+              doctor: doctor,
+              autoRotation: false,
+            ),
+        ],
+      );
+
+      expect(find.text('ช่อง 12'), findsNWidgets(2));
+      expect(find.text('LS0012'), findsNWidgets(2));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'AUTO ROTATION สลับ station ที่จำนวนช่องต่างกัน → ไม่ล้นระหว่างเปลี่ยน',
+    (tester) async {
+      // คิวคู่ + การ์ดแพทย์ = พื้นที่กำลังตรวจน้อย → 2 ช่องกับ 4 ช่องสูงไม่เท่ากัน
+      channelCount = {'screening': 2, 'refraction': 4};
+      await pumpDisplay(
+        tester,
+        mode: QueueMode.dual,
+        slots: [
+          QueueSlotSelection(
+            type: type,
+            station: screening,
+            doctor: doctor,
+            autoRotation: true,
+          ),
+          QueueSlotSelection(
+            type: type,
+            station: screening,
+            doctor: doctor,
+            autoRotation: false,
+          ),
+        ],
+      );
+      // fixture: ช่อง 1, ห้อง 4 | ช่อง 2, ช่อง 2
+      expect(find.text('ห้อง 4'), findsNWidgets(2));
+      expect(find.text('ช่อง 2'), findsNothing);
+
+      // screening มีคิว → ค้าง 30 วิ → fetch ซ้ำเหมือนเดิม → ไป refraction
+      await tester.pump(const Duration(seconds: 31));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      await tester.pumpAndSettle();
+
+      expect(find.text('ช่อง 2'), findsNWidgets(2));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('คิวรอเกินที่ → แสดงเท่าที่พอ + "+N"', (tester) async {
     lists['2SCR|CALLING'] = [
       for (var i = 1; i <= 11; i++) 'Q${i.toString().padLeft(3, '0')}',
@@ -315,6 +539,53 @@ void main() {
     expect(find.text('Q009'), findsNothing);
     expect(find.text('+3'), findsOneWidget);
   });
+
+  testWidgets(
+    'ปุ่มสลับโหมด: ซ่อนไว้ → กดรีโมท = โผล่ + focus → OK สลับ → ไม่กด 5 วิหาย; Back ยังกลับได้',
+    (tester) async {
+      await pumpDisplay(
+        tester,
+        mode: QueueMode.single,
+        slots: [
+          QueueSlotSelection(
+            type: type,
+            station: screening,
+            autoRotation: false,
+          ),
+        ],
+      );
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(QueueDisplayPage)),
+      );
+      expect(find.text('โหมดสว่าง'), findsNothing);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('โหมดสว่าง'), findsOneWidget);
+      expect(FocusManager.instance.primaryFocus?.debugLabel, 'theme-toggle');
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.select);
+      await tester.pump();
+      expect(container.read(themeModeProvider), ThemeMode.light);
+      expect(find.text('โหมดมืด'), findsOneWidget);
+
+      // กดปุ่มอื่นระหว่างแสดง = นับใหม่ → 4 วิยังอยู่, ครบ 5 วิหลังกดล่าสุดถึงหาย
+      await tester.pump(const Duration(seconds: 3));
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+      await tester.pump(const Duration(seconds: 4));
+      expect(find.text('โหมดมืด'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 2));
+      expect(find.text('โหมดมืด'), findsNothing);
+
+      // Back ระหว่างปุ่มโผล่ ยังกลับหน้าตั้งค่า
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pump();
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(find.text('SETUP PAGE'), findsOneWidget);
+    },
+  );
 
   testWidgets('Back = กลับหน้าตั้งค่า; เข้าหน้า = กันจอดับ, ออก = ปล่อย', (
     tester,
@@ -374,8 +645,8 @@ void main() {
       await tester.pump(const Duration(milliseconds: 600));
       await tester.pumpAndSettle();
 
-      expect(voiceRequests, ['ขอเชิญหมายเลข LS0002 ที่ ช่อง 2 ค่ะ']);
-      expect(player.played, ['ขอเชิญหมายเลข LS0002 ที่ ช่อง 2 ค่ะ']);
+      expect(voiceRequests, ['ขอเชิญหมายเลข L S 0 0 0 2 ที่ ช่อง 2 ค่ะ']);
+      expect(player.played, ['ขอเชิญหมายเลข L S 0 0 0 2 ที่ ช่อง 2 ค่ะ']);
       expect(find.text('LS0002'), findsOneWidget);
       expect(
         find.byKey(const ValueKey('announcing-highlight')),
